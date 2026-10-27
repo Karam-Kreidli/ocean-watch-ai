@@ -2,11 +2,11 @@ import { useState, useEffect, useRef } from "react";
 import { Calendar, Clock, Download, Upload as UploadIcon, Loader2, CheckCircle2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PageHeader } from "@/components/PageHeader";
 import { Dataset, DatasetFrame, RunInfo } from "@/data/monitorDatasets";
 import DatasetFrameView from "@/components/monitor/DatasetFrameView";
 import ProcessingView from "@/components/monitor/ProcessingView";
+import VideoCards from "@/components/monitor/VideoCards";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,6 +30,13 @@ const EMPTY_FRAME: DatasetFrame = {
   frameStats: { fps: 0, inferenceMs: 0, vram: 0 },
 };
 
+/** Signed links for many storage paths in one request: path -> url. */
+async function signAll(paths: string[]): Promise<Record<string, string>> {
+  if (paths.length === 0) return {};
+  const { data } = await supabase.storage.from("datasets").createSignedUrls(paths, 3600);
+  return Object.fromEntries((data ?? []).filter((d) => d.signedUrl && d.path).map((d) => [d.path!, d.signedUrl]));
+}
+
 /** Latest run per dataset, with a signed URL for the annotated video once done. */
 async function loadRuns(datasetIds: string[]): Promise<Record<string, RunInfo>> {
   if (datasetIds.length === 0) return {};
@@ -38,16 +45,15 @@ async function loadRuns(datasetIds: string[]): Promise<Record<string, RunInfo>> 
     .select("id, dataset_id, status, progress, error, annotated_path, fish_tracked, richness")
     .in("dataset_id", datasetIds)
     .order("created_at", { ascending: false });
+  const latest = new Map<string, NonNullable<typeof data>[number]>();
+  for (const r of data ?? []) if (!latest.has(r.dataset_id)) latest.set(r.dataset_id, r);
+  const urls = await signAll([...latest.values()]
+    .filter((r) => r.status === "done" && r.annotated_path).map((r) => r.annotated_path as string));
   const out: Record<string, RunInfo> = {};
-  for (const r of data ?? []) {
-    if (out[r.dataset_id]) continue;
-    let annotatedUrl: string | undefined;
-    if (r.status === "done" && r.annotated_path) {
-      const { data: signed } = await supabase.storage.from("datasets").createSignedUrl(r.annotated_path, 3600);
-      annotatedUrl = signed?.signedUrl;
-    }
+  for (const r of latest.values()) {
     out[r.dataset_id] = {
-      id: r.id, status: r.status, progress: r.progress, error: r.error, annotatedUrl,
+      id: r.id, status: r.status, progress: r.progress, error: r.error,
+      annotatedUrl: r.annotated_path ? urls[r.annotated_path] : undefined,
       fishTracked: r.fish_tracked, richness: r.richness,
     };
   }
@@ -145,15 +151,10 @@ const LiveMonitor = () => {
 
       const loaded: Dataset[] = [];
       const pathByLoadedId: Record<string, string> = {};
+      const urls = await signAll(data.map((row) => row.storage_path).filter(Boolean));
       for (const row of data) {
-        if (!row.storage_path) continue;
-
-        const { data: signed } = await supabase
-          .storage
-          .from("datasets")
-          .createSignedUrl(row.storage_path, 3600);
-
-        if (!signed?.signedUrl) continue;
+        const url = row.storage_path ? urls[row.storage_path] : undefined;
+        if (!url) continue;
 
         loaded.push({
           id: row.id,
@@ -164,7 +165,7 @@ const LiveMonitor = () => {
           duration: row.duration_seconds ? formatDuration(row.duration_seconds) : "—",
           depth: "—",
           frames: [],
-          videoUrl: signed.signedUrl,
+          videoUrl: url,
         });
         pathByLoadedId[row.id] = row.storage_path;
       }
@@ -249,7 +250,7 @@ const LiveMonitor = () => {
 
   const activateDataset = (newDataset: Dataset) => {
     if (newDataset.videoUrl) blobUrlsRef.current.push(newDataset.videoUrl);
-    setDatasets((prev) => [...prev, newDataset]);
+    setDatasets((prev) => [newDataset, ...prev]);
     setSelectedDatasetId(newDataset.id);
     setCurrentFrameIdx(0);
     setIsPlaying(false);
@@ -457,68 +458,56 @@ const LiveMonitor = () => {
   return (
     <div className="min-h-screen pt-16">
       <div className="stagger mx-auto max-w-5xl space-y-6 px-4 py-10 sm:px-6 lg:px-8">
-        <PageHeader title="Data Explorer">
-          Your uploaded videos. Each one is analysed in the background; the annotated copy appears here when it's done.
-        </PageHeader>
+        <PageHeader title="Data Explorer" />
 
-        {/* Dataset selector & metadata */}
-        <div className="panel relative overflow-hidden">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3 text-sm text-muted-foreground">
-            <Select value={selectedDatasetId} onValueChange={handleDatasetChange}>
-              <SelectTrigger className="h-9 w-auto min-w-[12rem] max-w-[18rem] border-border bg-secondary font-medium text-foreground" aria-label="Video">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {datasets.map((ds) => (
-                  <SelectItem key={ds.id} value={ds.id}>{ds.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> {dataset.date}</span>
-            <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {dataset.duration}</span>
-            {/* while analysing, the progress view below carries the status */}
-            {run && !analysing && (
-              <span
-                className={`flex items-center gap-1.5 ${run.status === "failed" ? "text-destructive" : "text-foreground"}`}
-                title={run.error ?? undefined}
-              >
-                {(run.status === "pending" || run.status === "processing") && (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                )}
-                {run.status === "done" && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
-                <span className="max-w-[18rem] truncate">{runLabel(run)}</span>
-              </span>
-            )}
+        <VideoCards
+          datasets={datasets}
+          selectedId={selectedDatasetId}
+          savedIds={new Set(Object.keys(storagePathById))}
+          onSelect={handleDatasetChange}
+          onUpload={() => fileInputRef.current?.click()}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept="video/*"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) handleExplorerUpload(f);
+          }}
+        />
+
+        {/* the selected video: name, date, length, status and actions */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-border pb-4 text-sm text-muted-foreground">
+          <p className="min-w-0 max-w-full truncate font-display text-2xl text-foreground">{dataset.name}</p>
+          <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" /> {dataset.date}</span>
+          <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> {dataset.duration}</span>
+          {/* while analysing, the progress view below carries the status */}
+          {run && !analysing && (
+            <span
+              className={`flex items-center gap-1.5 ${run.status === "failed" ? "text-destructive" : "text-foreground"}`}
+              title={run.error ?? undefined}
+            >
+              {run.status === "done" && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
+              <span className="max-w-[18rem] truncate">{runLabel(run)}</span>
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
             {annotatedUrl && (
               <Button size="sm" variant="outline" onClick={() => setShowOriginal(!showOriginal)}>
                 {showOriginal ? "Show AI result" : "Show original"}
               </Button>
             )}
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                className="gap-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => setDatasetToDelete(dataset)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                Delete
-              </Button>
-              <Button size="sm" className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
-                <UploadIcon className="h-3.5 w-3.5" />
-                Upload
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                className="hidden"
-                accept="video/*"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleExplorerUpload(f);
-                }}
-              />
-            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="gap-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => setDatasetToDelete(dataset)}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete
+            </Button>
           </div>
         </div>
 

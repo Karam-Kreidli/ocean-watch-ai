@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import GuestLink from "@/components/GuestLink";
+import AuthLayout from "@/components/AuthLayout";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
@@ -45,6 +46,7 @@ const Login = () => {
   };
 
   return (
+    <AuthLayout>
     <div className="flex min-h-screen items-center justify-center px-4 pt-16">
       <div className="stagger w-full max-w-sm space-y-8">
         <div>
@@ -80,6 +82,7 @@ const Login = () => {
         <GuestLink />
       </div>
     </div>
+    </AuthLayout>
   );
 };
 

@@ -6,7 +6,7 @@ import { HealthIndicator } from "@/components/dashboard/HealthIndicator";
 import { BiodiversityScore } from "@/components/dashboard/BiodiversityScore";
 import { SpeciesChart } from "@/components/dashboard/SpeciesChart";
 import { DatasetSummary } from "@/components/dashboard/DatasetSummary";
-import { AbundanceProfile } from "@/components/dashboard/AbundanceProfile";
+import { SpeciesTable } from "@/components/dashboard/SpeciesTable";
 import BiodiversityInsight from "@/components/dashboard/BiodiversityInsight";
 import { DownloadReport } from "@/components/dashboard/DownloadReport";
 import {
@@ -322,7 +322,7 @@ const Dashboard = () => {
 
         <section className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
           <SpeciesChart species={dashboardSpeciesData} />
-          <AbundanceProfile species={dashboardSpeciesData} />
+          <SpeciesTable species={dashboardSpeciesData} />
         </section>
 
         <section>

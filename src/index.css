@@ -78,6 +78,20 @@
     font-family: 'Space Grotesk', system-ui, sans-serif;
   }
 
+  /* app pages: faint light from the surface at the top of the screen, static
+     (the landing page paints its own background over it) */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 75vh;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(70% 90% at 50% -20%, hsl(188 70% 40% / 0.14), transparent 70%),
+      radial-gradient(40% 50% at 85% -10%, hsl(174 72% 50% / 0.06), transparent 70%);
+  }
+
   * {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--border)) transparent;

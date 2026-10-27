@@ -1,9 +1,12 @@
 import { Loader2 } from "lucide-react";
 import { useGuestEntry } from "@/hooks/use-guest-entry";
+import { useAuth } from "@/contexts/AuthContext";
 
 /** "Just trying it out?" escape hatch under the login and sign-up forms. */
 const GuestLink = () => {
   const { enter, busy } = useGuestEntry();
+  const { user } = useAuth();
+  if (user) return null;   // already a guest: a second guest session would drop their uploads
   return (
     <p className="text-sm text-muted-foreground">
       Just trying it out?{" "}

@@ -14,19 +14,34 @@ const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [unconfirmed, setUnconfirmed] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setSubmitting(false);
 
     if (error) {
-      toast({ title: "Login failed", description: error.message, variant: "destructive" });
+      setUnconfirmed(error.code === "email_not_confirmed");
+      const description = error.code === "email_not_confirmed"
+        ? "Confirm your email first: open the link we sent you."
+        : error.code === "invalid_credentials" ? "Wrong email or password." : error.message;
+      toast({ title: "Login failed", description, variant: "destructive" });
       return;
     }
     toast({ title: "Welcome back" });
     navigate("/dashboard");
+  };
+
+  const resend = async () => {
+    const { error } = await supabase.auth.resend({
+      type: "signup", email: email.trim(),
+      options: { emailRedirectTo: `${window.location.origin}/dashboard` },
+    });
+    toast(error
+      ? { title: "Couldn't send it", description: error.message, variant: "destructive" }
+      : { title: "Sent", description: "Check your inbox and spam folder." });
   };
 
   return (
@@ -50,6 +65,13 @@ const Login = () => {
             {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Log in"}
           </Button>
         </form>
+
+        {unconfirmed && (
+          <p className="text-sm text-muted-foreground">
+            No email?{" "}
+            <button type="button" onClick={resend} className="text-primary hover:underline">Send the confirmation link again</button>
+          </p>
+        )}
 
         <p className="text-sm text-muted-foreground">
           Don't have an account?{" "}

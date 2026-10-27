@@ -15,6 +15,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "@/hooks/use-toast";
 
 const GENDER_OPTIONS = [
@@ -24,6 +25,7 @@ const GENDER_OPTIONS = [
 
 const Signup = () => {
   const navigate = useNavigate();
+  const { isGuest } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [phone, setPhone] = useState("");
@@ -78,22 +80,59 @@ const Signup = () => {
     }
 
     setSubmitting(true);
-    const { error } = await supabase.auth.signUp({
-      email,
+    const details = { phone, gender, organization, accepted_terms: acceptedTerms };
+
+    // a guest keeps their account (and the videos they uploaded): it gets this email + password
+    if (isGuest) {
+      const { error: fnErr } = await supabase.functions.invoke("upgrade-guest", { body: { email, password, data: details } });
+      if (fnErr) {
+        setSubmitting(false);
+        const body = await fnErr.context?.json?.().catch(() => null);
+        toast({ title: "Sign-up failed", description: body?.error ?? fnErr.message, variant: "destructive" });
+        return;
+      }
+      // a fresh session, so the app sees a normal account instead of the guest token
+      const { error: inErr } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      setSubmitting(false);
+      if (inErr) {
+        toast({ title: "Account created", description: "Log in with your new email and password." });
+        navigate("/login");
+        return;
+      }
+      toast({ title: "Account created", description: "Your uploads are kept." });
+      navigate("/dashboard");
+      return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim(),
       password,
       options: {
-        data: {
-          phone,
-          gender,
-          organization,
-          accepted_terms: acceptedTerms,
-        },
+        // the confirmation link opens the site the person signed up on (bioreef.ai or the
+        // vercel.app address); sessions live per address, so landing on the other one logs nobody in
+        emailRedirectTo: `${window.location.origin}/dashboard`,
+        data: details,
       },
     });
     setSubmitting(false);
 
     if (error) {
-      toast({ title: "Sign-up failed", description: error.message, variant: "destructive" });
+      const description = error.code === "over_email_send_rate_limit"
+        ? "Too many sign-ups in the last hour, so the confirmation email couldn't be sent. Please try again later."
+        : error.message;
+      toast({ title: "Sign-up failed", description, variant: "destructive" });
+      return;
+    }
+    // Supabase answers an already-registered email with a fake user (no identities) and sends nothing
+    if (data.user && data.user.identities?.length === 0) {
+      toast({ title: "This email already has an account", description: "Log in instead." });
+      navigate("/login");
+      return;
+    }
+    // email confirmation turned off: they are signed in already
+    if (data.session) {
+      toast({ title: "Account created" });
+      navigate("/dashboard");
       return;
     }
     toast({
@@ -108,7 +147,9 @@ const Signup = () => {
       <div className="stagger w-full max-w-sm space-y-8">
         <div>
           <h1 className="font-display text-4xl">Create an account</h1>
-          <p className="mt-2 text-sm text-muted-foreground">You need one to upload footage and keep the results.</p>
+          <p className="mt-2 text-sm text-muted-foreground">{isGuest
+            ? "Your videos from this guest session move to the new account."
+            : "You need one to upload footage and keep the results."}</p>
         </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
